@@ -1,0 +1,134 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Horizontal Plane Shooter</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body { background: #000; }
+    #wrapper { position: absolute; top: 0; left: 0; width: 100vw; max-width: 800px; transform-origin: top left; transition: transform 0.2s ease; }
+    #gameCanvas { width: 100%; height: auto; aspect-ratio: 16/9; background: #111; display: block; }
+    .controls { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; justify-content: space-between; align-items: center; width: 90%; max-width: 500px; pointer-events: none; }
+    .dir-pad { display: grid; grid-template-columns: 60px 60px 60px; grid-template-rows: 60px 60px 60px; gap: 10px; pointer-events: all; }
+    .dir-pad button, .action-pad button { background: transparent; border: none; touch-action: none; display: flex; justify-content: center; align-items: center; }
+    .dir-pad img, .action-pad img { width: 100%; height: 100%; object-fit: contain; }
+    .dir-pad .empty { visibility: hidden; }
+    .action-pad { pointer-events: all; display: flex; justify-content: center; align-items: center; }
+    .action-pad button { width: 60px; height: 60px; }
+    #lives { position: absolute; top: 10px; right: 10px; font-size: 1.5rem; }
+    #scoreDisplay { position: absolute; top: 10px; left: 10px; color: #fff; font-size: 1.5rem; font-family: sans-serif; text-shadow: 1px 1px 2px black; z-index: 10; }
+    #gameOverScreen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; justify-content: center; align-items: center; color: #fff; font-size: 2rem; display: none; z-index: 20; }
+    #gameOverScreen button { margin-top: 20px; padding: 10px 20px; font-size: 1rem; background: #28a; color: #fff; border: none; border-radius: 5px; }
+    .portrait #wrapper { transform: rotate(90deg) translateY(-100%); width: 100vh; height: 100vw; }
+  </style>
+</head>
+<body>
+  <div id="wrapper">
+    <canvas id="gameCanvas"></canvas>
+    <div id="scoreDisplay">Score: 0</div>
+    <div id="lives">❤️❤️❤️</div>
+    <div id="gameOverScreen">
+      <div>Game Over</div>
+      <button id="restartBtn">Restart</button>
+    </div>
+    <div class="controls">
+      <div class="dir-pad">
+        <button class="empty"></button>
+        <button data-dir="up"><img src="U.png" alt="Up"></button>
+        <button class="empty"></button>
+        <button data-dir="left"><img src="L.png" alt="Left"></button>
+        <button class="empty"></button>
+        <button data-dir="right"><img src="R.png" alt="Right"></button>
+        <button class="empty"></button>
+        <button data-dir="down"><img src="D.png" alt="Down"></button>
+        <button class="empty"></button>
+      </div>
+      <div class="action-pad">
+        <button data-action="shoot"><img src="Fire.png" alt="Fire"></button>
+      </div>
+    </div>
+  </div>
+  <audio id="bgm" src="Bgm.mp3" loop></audio>
+  <audio id="sfx-fire" src="Fire.mp3"></audio>
+  <audio id="sfx-gameover" src="GameOver.mp3"></audio>
+  <script>
+    // Orientation
+    const bodyEl = document.body;
+    function handleOrientation() {
+      if (window.innerHeight > window.innerWidth) bodyEl.classList.add('portrait');
+      else bodyEl.classList.remove('portrait');
+    }
+    window.addEventListener('resize', handleOrientation);
+    window.addEventListener('orientationchange', handleOrientation);
+    handleOrientation();
+    // Canvas
+    const canvas = document.getElementById('gameCanvas'); const ctx = canvas.getContext('2d');
+    function resizeCanvas() { const w = document.getElementById('wrapper').clientWidth; canvas.width = w; canvas.height = w * 9/16; }
+    window.addEventListener('resize', resizeCanvas); resizeCanvas();
+    // Assets load
+    const assetList = ['BG.png','Fly (1).png','Fly (2).png','Dead (1).png','Shoot (1).png','Shoot (2).png','Shoot (3).png','Shoot (4).png','Shoot (5).png','Bullet (1).png','Bullet (2).png','Bullet (3).png','Bullet (4).png','Bullet (5).png','M.png','U.png','D.png','L.png','R.png','Fire.png','Bgm.mp3','Fire.mp3','GameOver.mp3'];
+    const images = {}; let loaded=0;
+    assetList.forEach(src=>{
+      if(src.endsWith('.mp3')){ if(++loaded===assetList.length) initGame(); return;} 
+      const img=new Image(); img.src=src; img.onload=img.onerror=()=>{ images[src]=img; if(++loaded===assetList.length) initGame(); };
+    });
+    // Audio
+    const bgm=document.getElementById('bgm'), sfxFire=document.getElementById('sfx-fire'), sfxGameOver=document.getElementById('sfx-gameover');
+    // State
+    let plane, bullets, enemies, keys, bgX, gameOver, score, lives;
+    const scoreEl=document.getElementById('scoreDisplay'); const livesEl=document.getElementById('lives'); const gameOverScreen=document.getElementById('gameOverScreen');
+    function initGame(){
+      plane={x:100,y:canvas.height/2-30,w:60,h:60,frame:0,state:'fly',shootFrame:0,lastShoot:0};
+      bullets=[]; enemies=[]; keys={}; bgX=0; gameOver=false; score=0; lives=3;
+      scoreEl.textContent='Score: 0'; livesEl.textContent='❤️'.repeat(lives);
+      gameOverScreen.style.display='none'; bgm.currentTime=0; bgm.play(); spawnEnemy(); requestAnimationFrame(gameLoop);
+    }
+    // Input
+    function applyInput(code,pressed){ if(code==='shoot') keys['Space']=pressed; else keys[code]=pressed; }
+    document.querySelectorAll('button[data-dir]').forEach(btn=>{const dir=btn.dataset.dir; btn.addEventListener('touchstart',()=>applyInput(dir,true)); btn.addEventListener('touchend',()=>applyInput(dir,false));});
+    const shootBtn=document.querySelector('button[data-action="shoot"]'); shootBtn.addEventListener('touchstart',()=>applyInput('shoot',true)); shootBtn.addEventListener('touchend',()=>applyInput('shoot',false));
+    window.addEventListener('keydown',e=>keys[e.code]=true); window.addEventListener('keyup',e=>keys[e.code]=false);
+    document.getElementById('restartBtn').addEventListener('click',initGame);
+    function spawnEnemy(){ if(gameOver)return; enemies.push({x:canvas.width+50,y:Math.random()*(canvas.height-50),w:50,h:50,speed:3+Math.random()*2}); setTimeout(spawnEnemy,1000); }
+    // Loop
+    function gameLoop(time){ if(!gameOver){ update(time); draw(); requestAnimationFrame(gameLoop); }}
+    function update(time){
+      bgX=(bgX-2)%canvas.width;
+      // move
+      if(keys['left']&&plane.x>0)plane.x-=5; if(keys['right']&&plane.x<canvas.width-plane.w)plane.x+=5;
+      if(keys['up']&&plane.y>0)plane.y-=5; if(keys['down']&&plane.y<canvas.height-plane.h)plane.y+=5;
+      // shoot
+      if(keys['Space']&&time-plane.lastShoot>300){ bullets.push({x:plane.x+plane.w,y:plane.y+plane.h/2-5,w:20,h:10,frame:0}); plane.lastShoot=time; plane.state='shoot'; plane.shootFrame=0; sfxFire.currentTime=0; sfxFire.play(); }
+      // bullets
+      bullets=bullets.filter(b=>b.x<canvas.width); bullets.forEach(b=>{b.x+=10; b.frame=(b.frame+1)%5;});
+      // enemies
+      enemies.forEach((e,ei)=>{
+        e.x-=e.speed;
+        bullets.forEach((b,bi)=>{ if(b.x<e.x+e.w&&b.x+b.w>e.x&&b.y<e.y+e.h&&b.y+b.h>e.y){ enemies.splice(ei,1); bullets.splice(bi,1); score+=10; scoreEl.textContent='Score: '+score;} });
+        // collision
+        if(plane.x<e.x+e.w&&plane.x+plane.w>e.x&&plane.y<e.y+e.h&&plane.y+plane.h>e.y){ enemies.splice(ei,1); lives--; livesEl.textContent='❤️'.repeat(lives); if(lives===1){ plane.state='dead'; } if(lives<=0){ gameOver=true; bgm.pause(); sfxGameOver.play(); gameOverScreen.style.display='flex'; }}
+        if(e.x<-e.w)enemies.splice(ei,1);
+      });
+      // reset plane state
+      if(plane.state==='shoot'){ plane.shootFrame++; if(plane.shootFrame>4) plane.state='fly'; }
+      if(plane.state==='fly'&& lives>1) plane.frame=(plane.frame+1)%2;
+    }
+    function draw(){
+      // bg
+      ctx.drawImage(images['BG.png'],bgX,0,canvas.width,canvas.height);
+      ctx.drawImage(images['BG.png'],bgX+canvas.width,0,canvas.width,canvas.height);
+      // bullets
+      bullets.forEach(b=>ctx.drawImage(images[`Bullet (${b.frame+1}).png`],b.x,b.y,b.w,b.h));
+      // enemies
+      enemies.forEach(e=>ctx.drawImage(images['M.png'],e.x,e.y,e.w,e.h));
+      // plane
+      let img;
+      if(plane.state==='dead') img=images['Dead (1).png'];
+      else if(plane.state==='shoot') img=images[`Shoot (${ (plane.shootFrame %5)+1 }).png`];
+      else img=images[`Fly (${ (plane.frame%2)+1 }).png`];
+      ctx.drawImage(img,plane.x,plane.y,plane.w,plane.h);
+    }
+  </script>
+</body>
+</html>
